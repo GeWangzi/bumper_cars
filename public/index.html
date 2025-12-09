@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <title>Three.js Bumper Cars</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+    }
+  </style>
+</head>
+
+<body>
+  <script src="/socket.io/socket.io.js"></script>
+
+  <script type="module">
+    import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
+
+    // ---------- Scene ----------
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x202020);
+
+    const camera = new THREE.PerspectiveCamera(
+      75,
+      window.innerWidth / window.innerHeight,
+      0.1,
+      1000
+    );
+    camera.position.set(0, 15, 25);
+    camera.lookAt(0, 0, 0);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    // ========================
+    //  FLOOR WITH POLKA DOTS
+    // ========================
+    const ARENA_RADIUS = 18;
+    const floorGeo = new THREE.CircleGeometry(ARENA_RADIUS, 64);
+
+    // --- create a polka-dot canvas texture ---
+    function createPolkaDotTexture() {
+      const size = 256;
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = size;
+      const ctx = canvas.getContext("2d");
+
+      // background
+      ctx.fillStyle = "#202020";
+      ctx.fillRect(0, 0, size, size);
+
+      // dots
+      ctx.fillStyle = "#3a3a3a"; // subtle contrast
+      const spacing = 32;
+      const radius = 4;
+
+      for (let y = spacing / 2; y < size; y += spacing) {
+        for (let x = spacing / 2; x < size; x += spacing) {
+          ctx.beginPath();
+          ctx.arc(x, y, radius, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(8, 8); // how dense the polka dots look
+      tex.anisotropy = 8;
+      return tex;
+    }
+
+    const floorTex = createPolkaDotTexture();
+
+    const floorMat = new THREE.MeshStandardMaterial({
+      map: floorTex,
+      metalness: 0.2,
+      roughness: 0.7,
+    });
+    const floor = new THREE.Mesh(floorGeo, floorMat);
+    floor.rotation.x = -Math.PI / 2;
+    floor.receiveShadow = true;
+    scene.add(floor);
+
+    // ========================
+    //  ARENA DISC + BORDER
+    // ========================
+
+    // glowing border ring (inner yellow line)
+    const borderGeo = new THREE.RingGeometry(
+      ARENA_RADIUS - 0.2,
+      ARENA_RADIUS + 0.2,
+      64
+    );
+    const borderMat = new THREE.MeshBasicMaterial({
+      color: 0xffcc33,
+      side: THREE.DoubleSide,
+    });
+    const border = new THREE.Mesh(borderGeo, borderMat);
+    border.rotation.x = -Math.PI / 2;
+    border.position.y = 0.02;
+    scene.add(border);
+
+    // =====================================
+    //  FENCE WALL MADE OF GLOWING RED RINGS
+    // =====================================
+
+    const wallHeight = 0.8;
+
+    // group to hold the fence rings
+    const fenceGroup = new THREE.Group();
+
+    // each ring is a torus around the arena
+    const ringRadius = ARENA_RADIUS + 0.3; // slightly outside arena edge
+    const ringTube = 0.12;
+    const ringGeo = new THREE.TorusGeometry(ringRadius, ringTube, 16, 96);
+
+    const ringMat = new THREE.MeshStandardMaterial({
+      color: 0xff3333,
+      emissive: 0xff2222,
+      emissiveIntensity: 1.5, // glow-ish
+      metalness: 0.6,
+      roughness: 0.25,
+    });
+
+    const ringCount = 5; // number of stacked rings
+    const totalHeight = wallHeight;
+    const step = totalHeight / (ringCount - 1);
+
+    for (let i = 0; i < ringCount; i++) {
+      const ring = new THREE.Mesh(ringGeo, ringMat);
+      // make the torus lie flat in XZ plane around Y-axis
+      ring.rotation.x = Math.PI / 2;
+      ring.position.y = 0.2 + i * step; // stack up
+      fenceGroup.add(ring);
+    }
+
+    scene.add(fenceGroup);
+
+    // (remove / comment out the old cylinder wall)
+    // const arenaWall = new THREE.Mesh(wallGeo, wallMat);
+    // scene.add(arenaWall);
+
+    // ========================
+    //  PARTICLES NEAR THE WALL
+    // ========================
+
+    const particleCount = 800;
+    const positions = new Float32Array(particleCount * 3);
+    const velocities = new Float32Array(particleCount * 3);
+
+    const particlesGeo = new THREE.BufferGeometry();
+    const minY = 0.1;
+    const maxY = wallHeight + 0.7;
+
+    for (let i = 0; i < particleCount; i++) {
+      const i3 = i * 3;
+      const angle = Math.random() * Math.PI * 2;
+      const radius = ARENA_RADIUS + 0.3 + Math.random() * 0.6; // around the fence
+
+      positions[i3 + 0] = Math.cos(angle) * radius;
+      positions[i3 + 1] = minY + Math.random() * (maxY - minY);
+      positions[i3 + 2] = Math.sin(angle) * radius;
+
+      velocities[i3 + 0] = (Math.random() - 0.5) * 0.01; // tiny horizontal wiggle
+      velocities[i3 + 1] = 0.01 + Math.random() * 0.02; // upward
+      velocities[i3 + 2] = (Math.random() - 0.5) * 0.01;
+    }
+
+    particlesGeo.setAttribute(
+      "position",
+      new THREE.BufferAttribute(positions, 3)
+    );
+
+    const particlesMat = new THREE.PointsMaterial({
+      color: 0xff6666,
+      size: 0.08,
+      transparent: true,
+      opacity: 0.9,
+    });
+
+    const wallParticles = new THREE.Points(particlesGeo, particlesMat);
+    scene.add(wallParticles);
+
+    // ===============
+    //     LIGHTING
+    // ===============
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+    dirLight.position.set(10, 15, 10);
+    scene.add(dirLight);
+
+    const ambient = new THREE.AmbientLight(0xffffff, 0.4);
+    scene.add(ambient);
+    // ---------- Players / Bumper Cars ----------
+
+    // Store player meshes: id -> THREE.Group
+    const playerMeshes = {};
+    let myId = null;
+
+    // 💡 bumper car radius (for collision on XZ plane)
+    const BUMPER_RADIUS = 1.2;
+
+    // movement / physics for the local player only
+    const myVelocity = { x: 0, z: 0 }; // vx, vz
+    const ACCEL = 0.0034; // how quickly you speed up
+    const FRICTION = 0.95; // how quickly you slow down
+    const BOUNCE_FACTOR = 4.2;      // how hard they bounce on hit
+    const MIN_BOUNCE_SPEED = 0.08;  // minimum speed after a hit
+    const OVERLAP_BONUS = 0.05;     // extra oomph if they overlap deeply
+
+    // camera follow
+    const cameraOffset = new THREE.Vector3(0, 5, 10);
+    const cameraTarget = new THREE.Vector3();
+
+    // 💡 Create a round bumper car instead of a cube
+    function createPlayerMesh(id, color, x, y, z) {
+      const group = new THREE.Group();
+
+      // base disc
+      const baseGeo = new THREE.CylinderGeometry(1.0, 1.0, 0.4, 24);
+      const baseMat = new THREE.MeshStandardMaterial({ color });
+      const base = new THREE.Mesh(baseGeo, baseMat);
+      base.castShadow = true;
+      base.receiveShadow = true;
+      group.add(base);
+
+      // outer rubber ring
+      const ringGeo = new THREE.TorusGeometry(1.2, 0.15, 16, 32);
+      const ringMat = new THREE.MeshStandardMaterial({ color: 0x000000 });
+      const ring = new THREE.Mesh(ringGeo, ringMat);
+      ring.rotation.x = Math.PI / 2;
+      group.add(ring);
+
+      // little “seat”
+      const seatGeo = new THREE.CylinderGeometry(0.4, 0.4, 0.6, 16);
+      const seatMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
+      const seat = new THREE.Mesh(seatGeo, seatMat);
+      seat.position.y = 0.5;
+      group.add(seat);
+
+      group.position.set(x, y, z);
+      scene.add(group);
+      playerMeshes[id] = group;
+    }
+
+    function removePlayerMesh(id) {
+      const mesh = playerMeshes[id];
+      if (!mesh) return;
+      scene.remove(mesh);
+      mesh.traverse((child) => {
+        if (child.isMesh) {
+          child.geometry.dispose();
+          child.material.dispose();
+        }
+      });
+      delete playerMeshes[id];
+    }
+
+    // ---------- Networking ----------
+    const socket = io();
+
+    socket.on("connect", () => {
+      myId = socket.id;
+      console.log("Connected as", myId);
+    });
+
+    socket.on("currentPlayers", (players) => {
+      for (const [id, p] of Object.entries(players)) {
+        createPlayerMesh(id, p.color, p.x, p.y, p.z);
+      }
+    });
+
+    socket.on("newPlayer", (p) => {
+      createPlayerMesh(p.id, p.color, p.x, p.y, p.z);
+    });
+
+    socket.on("playerMoved", (p) => {
+      const mesh = playerMeshes[p.id];
+      if (!mesh) return;
+      mesh.position.set(p.x, p.y, p.z);
+    });
+
+    socket.on("applyImpulse", ({ nx, nz, speed }) => {
+      // This is only meaningful for our own car.
+      console.log("impulse:", nx, nz, speed);
+      if (!myId) return;
+      const me = playerMeshes[myId];
+      if (!me) return;
+
+      // Apply the impulse to our local velocity.
+      myVelocity.x += nx * speed;
+      myVelocity.z += nz * speed;
+    });
+
+
+    socket.on("playerDisconnected", (id) => {
+      removePlayerMesh(id);
+    });
+
+    // ---------- Input ----------
+    const keys = { w: false, a: false, s: false, d: false };
+
+    window.addEventListener("keydown", (e) => {
+      const k = e.key.toLowerCase();
+      if (k in keys) keys[k] = true;
+    });
+
+    window.addEventListener("keyup", (e) => {
+      const k = e.key.toLowerCase();
+      if (k in keys) keys[k] = false;
+    });
+
+    // ---------- Collision & Physics ----------
+
+    // 💡 Simple bumper car physics:
+    // - WASD accelerates you
+    // - we integrate velocity
+    // - on collision with another car, we push you out and bounce your velocity
+
+    function resolvePlayerCollisions() {
+      if (!myId) return;
+      const me = playerMeshes[myId];
+      if (!me) return;
+
+      for (const [id, other] of Object.entries(playerMeshes)) {
+        if (id === myId) continue;
+
+        const dx = me.position.x - other.position.x;
+        const dz = me.position.z - other.position.z;
+        const distSq = dx * dx + dz * dz;
+        const minDist = BUMPER_RADIUS * 2;
+
+        if (distSq <= minDist * minDist) {
+          console.log("COLLISION detected with:", id);
+        }
+        if (distSq === 0 || distSq > minDist * minDist) continue;
+
+        const dist = Math.sqrt(distSq);
+        const overlap = minDist - dist;
+
+        // normal from other -> me
+        const nx = dx / dist;
+        const nz = dz / dist;
+
+        // 🟡 Symmetric position correction: split the push 50/50
+        const push = overlap * 0.5;
+        me.position.x += nx * push;
+        me.position.z += nz * push;
+        other.position.x -= nx * push;
+        other.position.z -= nz * push;
+
+        // 💥 Bounce our own velocity (arcade style)
+        const vDotN = myVelocity.x * nx + myVelocity.z * nz;
+
+        if (vDotN < 0) {
+          const overlapStrength = overlap * OVERLAP_BONUS;
+          let bounceSpeed = -vDotN * BOUNCE_FACTOR + overlapStrength;
+          bounceSpeed = Math.max(bounceSpeed, MIN_BOUNCE_SPEED);
+
+          myVelocity.x = nx * bounceSpeed;
+          myVelocity.z = nz * bounceSpeed;
+
+          socket.emit("collisionImpulse", {
+            targetId: id,
+            nx,
+            nz,
+            speed: bounceSpeed,
+          });
+        }
+      }
+    }
+
+
+    function updateLocalPlayer() {
+      if (!myId) return;
+      const me = playerMeshes[myId];
+      if (!me) return;
+
+      // 1) Accelerate based on WASD (relative to world axes)
+      if (keys.w) myVelocity.z -= ACCEL;
+      if (keys.s) myVelocity.z += ACCEL;
+      if (keys.a) myVelocity.x -= ACCEL;
+      if (keys.d) myVelocity.x += ACCEL;
+
+      // 2) Apply friction
+      myVelocity.x *= FRICTION;
+      myVelocity.z *= FRICTION;
+
+      // 3) Integrate position
+      me.position.x += myVelocity.x;
+      me.position.z += myVelocity.z;
+
+      // 4) Keep inside the arena circle
+      const r = Math.sqrt(me.position.x * me.position.x + me.position.z * me.position.z);
+      const arenaRadius = 18;
+      if (r > ARENA_RADIUS) {
+        const nx = me.position.x / r;
+        const nz = me.position.z / r;
+        me.position.x = nx * ARENA_RADIUS;
+        me.position.z = nz * ARENA_RADIUS;
+
+        const vDotN = myVelocity.x * nx + myVelocity.z * nz;
+        if (vDotN > 0) {
+          myVelocity.x -= 2 * vDotN * nx;
+          myVelocity.z -= 2 * vDotN * nz;
+        }
+      }
+      // 5) Collide with other players (bumper effect)
+      resolvePlayerCollisions();
+
+      // 6) Send updated position to server
+      socket.emit("move", {
+        x: me.position.x,
+        y: me.position.y,
+        z: me.position.z,
+      });
+
+      // 7) Third-person camera follow
+      const desired = me.position.clone().add(cameraOffset);
+      camera.position.lerp(desired, 0.15);
+      cameraTarget.copy(me.position);
+      camera.lookAt(cameraTarget);
+    }
+
+    // set initial camera somewhere sensible
+    camera.position.set(0, 8, 15);
+    camera.lookAt(0, 0, 0);
+
+    // ---------- Loop ----------
+    function animate() {
+      requestAnimationFrame(animate);
+      updateLocalPlayer();
+      // subtle pulsating border effect
+      const t = performance.now() * 0.002;
+      ringMat.emissiveIntensity = 1.3 + Math.sin(t * 3) * 0.4;
+
+      // update particles
+      const pos = particlesGeo.attributes.position.array;
+      for (let i = 0; i < particleCount; i++) {
+        const i3 = i * 3;
+
+        pos[i3 + 0] += velocities[i3 + 0];
+        pos[i3 + 1] += velocities[i3 + 1];
+        pos[i3 + 2] += velocities[i3 + 2];
+
+        // reset when particles go too high
+        if (pos[i3 + 1] > maxY) {
+          const angle = Math.random() * Math.PI * 2;
+          const radius = ARENA_RADIUS + 0.3 + Math.random() * 0.6;
+
+          pos[i3 + 0] = Math.cos(angle) * radius;
+          pos[i3 + 1] = minY;
+          pos[i3 + 2] = Math.sin(angle) * radius;
+        }
+      }
+      particlesGeo.attributes.position.needsUpdate = true;
+
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    // ---------- Resize ----------
+    window.addEventListener("resize", () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+
+</html>
