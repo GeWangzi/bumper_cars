@@ -13,10 +13,13 @@
 </head>
 
 <body>
-  <script src="/socket.io/socket.io.js"></script>
-
   <script type="module">
+    import { io } from "https://cdn.socket.io/4.8.1/socket.io.esm.min.js";
     import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
+
+    const socket = io("https://bumper-cars.onrender.com", {
+      transports: ["websocket", "polling"],
+    });
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x202020);
@@ -95,7 +98,7 @@
 
     const fenceGroup = new THREE.Group();
 
-    const ringRadius = ARENA_RADIUS + 0.3; 
+    const ringRadius = ARENA_RADIUS + 0.3;
     const ringTube = 0.12;
     const ringGeo = new THREE.TorusGeometry(ringRadius, ringTube, 16, 96);
 
@@ -188,14 +191,12 @@
       base.receiveShadow = true;
       group.add(base);
 
-      // outer rubber ring
       const ringGeo = new THREE.TorusGeometry(1.2, 0.15, 16, 32);
       const ringMat = new THREE.MeshStandardMaterial({ color: 0x000000 });
       const ring = new THREE.Mesh(ringGeo, ringMat);
       ring.rotation.x = Math.PI / 2;
       group.add(ring);
 
-      // little “seat”
       const seatGeo = new THREE.CylinderGeometry(0.4, 0.4, 0.6, 16);
       const seatMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
       const seat = new THREE.Mesh(seatGeo, seatMat);
@@ -219,8 +220,6 @@
       });
       delete playerMeshes[id];
     }
-
-    const socket = io();
 
     socket.on("connect", () => {
       myId = socket.id;
@@ -338,7 +337,6 @@
       me.position.z += myVelocity.z;
 
       const r = Math.sqrt(me.position.x * me.position.x + me.position.z * me.position.z);
-      const arenaRadius = 18;
       if (r > ARENA_RADIUS) {
         const nx = me.position.x / r;
         const nz = me.position.z / r;
