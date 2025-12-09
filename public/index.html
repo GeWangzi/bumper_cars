@@ -37,7 +37,9 @@
     import { io } from "https://cdn.socket.io/4.8.1/socket.io.esm.min.js";
     import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
 
-    const socket = io();
+    const socket = io("https://bumper-cars.onrender.com", {
+      transports: ["websocket", "polling"],
+    });
 
     const respawnOverlay = document.getElementById("respawnOverlay");
 
@@ -189,7 +191,6 @@
     const playerMeshes = {};
     const playerStreaks = {};
     let myId = null;
-    const beybladeGroups = {};
 
     const BUMPER_RADIUS = 1.2;
 
@@ -252,72 +253,9 @@
       applyStreakScale(id);
     }
 
-    function createBeybladesForPlayer(id) {
-      const car = playerMeshes[id];
-      if (!car || beybladeGroups[id]) return;
-
-      const group = new THREE.Group();
-
-      // 3 spinning "beyblades" around the car
-      const bladeGeo = new THREE.TorusGeometry(0.7, 0.08, 12, 24);
-      const bladeMat = new THREE.MeshStandardMaterial({
-        color: 0x66ccff,
-        emissive: 0x3399ff,
-        emissiveIntensity: 1.4,
-        metalness: 0.7,
-        roughness: 0.25,
-      });
-
-      const radius = 1.8;
-      const y = 0.9; // slightly above bumper
-
-      for (let i = 0; i < 3; i++) {
-        const angle = (i / 3) * Math.PI * 2;
-        const blade = new THREE.Mesh(bladeGeo, bladeMat);
-        blade.position.set(Math.cos(angle) * radius, y, Math.sin(angle) * radius);
-        blade.rotation.x = Math.PI / 2;
-        group.add(blade);
-      }
-
-      car.add(group);
-      beybladeGroups[id] = group;
-    }
-
-    function removeBeybladesForPlayer(id) {
-      const group = beybladeGroups[id];
-      if (!group) return;
-
-      if (group.parent) {
-        group.parent.remove(group);
-      }
-
-      group.traverse((child) => {
-        if (child.isMesh) {
-          child.geometry.dispose();
-          child.material.dispose();
-        }
-      });
-
-      delete beybladeGroups[id];
-    }
-
-    // helper to toggle based on streak
-    function refreshBeyblades(id) {
-      const streak = playerStreaks[id] || 0;
-      if (streak >= 3) {
-        createBeybladesForPlayer(id);
-      } else {
-        removeBeybladesForPlayer(id);
-      }
-    }
-
     function removePlayerMesh(id) {
       const mesh = playerMeshes[id];
       if (!mesh) return;
-
-      // remove beyblades too
-      removeBeybladesForPlayer(id);
-
       scene.remove(mesh);
       mesh.traverse((child) => {
         if (child.isMesh) {
@@ -329,6 +267,7 @@
       delete playerStreaks[id];
     }
 
+    // ---------- Explosion Particles ----------
     function spawnExplosion(pos) {
       console.log("Spawning explosion at", pos.x, pos.y, pos.z);
       const count = 100;
