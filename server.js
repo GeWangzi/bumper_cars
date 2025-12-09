@@ -1,7 +1,3 @@
-// Run:  npm init -y
-//       npm install express socket.io
-//       node server.js
-
 import express from "express";
 import { createServer } from "http";
 import { Server } from "socket.io";
@@ -12,10 +8,9 @@ const io = new Server(httpServer, {
   cors: { origin: "*" },
 });
 
-// Serve static files (our Three.js client)
 app.use(express.static("public"));
 
-const players = {};  // { socketId: { x, y, z, color } }
+const players = {};
 
 function randomColor() {
   return "#" + Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, "0");
@@ -32,28 +27,22 @@ io.on("connection", (socket) => {
     color: randomColor(),
   };
 
-  // 1) Send existing players + this player to the new client
   socket.emit("currentPlayers", players);
 
-  // 2) Let everyone else know a new player joined
   socket.broadcast.emit("newPlayer", { id: socket.id, ...players[socket.id] });
 
-  // 3) Receive movement updates from this player
   socket.on("move", (data) => {
     if (!players[socket.id]) return;
     players[socket.id].x = data.x;
     players[socket.id].y = data.y;
     players[socket.id].z = data.z;
 
-    // Broadcast to others (but not back to the sender)
     socket.broadcast.emit("playerMoved", { id: socket.id, ...players[socket.id] });
   });
 
   socket.on("collisionImpulse", (data) => {
     const { targetId, nx, nz, speed } = data;
 
-    // Forward an impulse to the target player.
-    // Note: we flip the normal so it points away from the collider.
     io.to(targetId).emit("applyImpulse", {
       nx: -nx,
       nz: -nz,
